@@ -1,3 +1,4 @@
+#!/bin/bash
 version=$1 # interp or loop
 ckpt=checkpoints/dynamicrafter_512_interp_v1/model.ckpt
 config=configs/inference_512_v1.0.yaml
