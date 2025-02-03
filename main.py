@@ -17,6 +17,8 @@ from einops import rearrange, repeat
 from lvdm.models.samplers.ddim import DDIMSampler
 from lvdm.models.samplers.ddim_multiplecond import DDIMSampler as DDIMSampler_multicond
 
+from pytorch_lightning import seed_everything
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -27,6 +29,34 @@ def parse_args():
     parser.add_argument('--last_frm_path', type=str, default='')
     parser.add_argument('--prompt_file_path', type=str, default='')
     parser.add_argument('--out_dir', type=str, default='')
+    parser.add_argument('--height', type=int, default=512)
+    parser.add_argument('--width', type=int, default=512)
+    parser.add_argument('--frame_stride', type=int, default=3)  # see inference.py
+    parser.add_argument('--seed', type=int, default=123)
+    parser.add_argument('--video_length', type=int, default=16)
+    parser.add_argument("--perframe_ae", action='store_true', default=False,
+                        help="if we use per-frame AE decoding, set it to True to save GPU memory, especially for the model of 576x1024")
+
+    # The following argus use the default ones
+    parser.add_argument("--n_samples", type=int, default=1, help="num of samples per prompt")
+    parser.add_argument('--bs', type=int, default=1)
+    parser.add_argument("--ddim_steps", type=int, default=50, help="steps of ddim if positive, otherwise use DDPM")
+    parser.add_argument("--ddim_eta", type=float, default=1.0,
+                        help="eta for ddim sampling (0.0 yields deterministic sampling)")
+    parser.add_argument("--unconditional_guidance_scale", type=float, default=1.0,
+                        help="prompt classifier-free guidance")
+    parser.add_argument("--negative_prompt", action='store_true', default=False, help="negative prompt")
+    parser.add_argument("--text_input", action='store_true', default=False, help="input text to I2V model or not")
+    parser.add_argument("--multiple_cond_cfg", action='store_true', default=False,
+                        help="use multi-condition cfg or not")
+    parser.add_argument("--cfg_img", type=float, default=None, help="guidance scale for image conditioning")
+    parser.add_argument("--timestep_spacing", type=str, default="uniform",
+                        help="The way the timesteps should be scaled. Refer to Table 2 of the [Common Diffusion Noise Schedules and Sample Steps are Flawed](https://huggingface.co/papers/2305.08891) for more information.")
+    parser.add_argument("--guidance_rescale", type=float, default=0.0,
+                        help="guidance rescale in [Common Diffusion Noise Schedules and Sample Steps are Flawed](https://huggingface.co/papers/2305.08891)")
+    parser.add_argument("--loop", action='store_true', default=False, help="generate looping videos or not")
+    parser.add_argument("--interp", action='store_true', default=True,
+                        help="generate generative frame interpolation or not")
     args = parser.parse_args()
     return args
 
@@ -85,6 +115,28 @@ def load_prompts(prompt_file):
             prompt_list.append(l)
         f.close()
     return prompt_list
+
+
+def load_frames(first_frm_path, last_frm_path, height, width, n_frames):
+    transform = transforms.Compose([
+        transforms.Resize((height, width)),
+        transforms.CenterCrop((height, width)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
+    first_frm = Image.open(first_frm_path).convert('RGB')
+    image_tensor1 = transform(first_frm).unsqueeze(1)
+    last_frm = Image.open(last_frm_path).convert('RGB')
+    image_tensor2 = transform(last_frm).unsqueeze(1)
+    frame_tensor1 = repeat(image_tensor1, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
+    frame_tensor2 = repeat(image_tensor2, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
+    frame_tensor = torch.cat([frame_tensor1, frame_tensor2], dim=1)
+    return frame_tensor
+
+
+def load_prompt(prompt_file):
+    with open(prompt_file, 'r') as reader:
+        prompt = reader.read()
+    return prompt
 
 
 def load_data_prompts(data_dir, video_size=(256, 256), video_frames=16, interp=False):
@@ -242,6 +294,25 @@ def save_results_seperate(prompt, samples, filename, fakedir, fps=10, loop=False
             path = os.path.join(savedirs[idx].replace('samples', 'samples_separate'), f'{filename.split(".")[0]}_sample{i}.mp4')
             torchvision.io.write_video(path, grid, fps=fps, video_codec='h264', options={'crf': '10'})
 
+def save_results_frame(out_dir, samples, filename):
+    """
+    Save the results by frame
+    """
+    if not os.path.exists(out_dir):
+        print("Output directory doesn't exist, creating it")
+        os.makedirs(out_dir)
+    samples = samples.detach().cpu()
+    samples = torch.clamp(samples.float(), -1., 1.)
+    sample = samples[0] # Suppose batch size is 1 in the inference
+    sample = (sample + 1.0) / 2.0
+    sample = (sample * 255).to(torch.uint8).permute(1, 2, 3, 0)
+    sample = sample.numpy()
+    n_frames = sample.shape[0]
+    for i in range(n_frames):
+        frame = sample[i, ...]
+        img = Image.fromarray(frame)
+        img.save(os.path.join(out_dir, f'{filename.split(".")[0]}_{i}.png'))
+
 
 def run_frm_interp(args):
     """
@@ -272,16 +343,27 @@ def run_frm_interp(args):
     print(f'Inference with {n_frames} frames')
     noise_shape = [args.bs, channels, n_frames, h, w]
 
-    fakedir = os.path.join(args.savedir, "samples")
-    fakedir_separate = os.path.join(args.savedir, "samples_separate")
+    # fakedir = os.path.join(args.savedir, "samples")
+    # fakedir_separate = os.path.join(args.savedir, "samples_separate")
+    #
+    # # os.makedirs(fakedir, exist_ok=True)
+    # os.makedirs(fakedir_separate, exist_ok=True)
 
-    # os.makedirs(fakedir, exist_ok=True)
-    os.makedirs(fakedir_separate, exist_ok=True)
+    frame_tensor = load_frames(first_frm_path=args.first_frm_path,
+                               last_frm_path=args.last_frm_path,
+                               height=args.height,
+                               width=args.width,
+                               n_frames=n_frames)
+    data_list = [frame_tensor]
+    prompt = load_prompt(args.prompt_file_path)
+    prompt_list = [prompt]
+    _, filename = os.path.split(args.first_frm_path)
+    filename_list = [filename]
 
     ## prompt file setting
-    assert os.path.exists(args.prompt_dir), "Error: prompt file Not Found!"
-    filename_list, data_list, prompt_list = load_data_prompts(args.prompt_dir, video_size=(args.height, args.width),
-                                                              video_frames=n_frames, interp=args.interp)
+    # assert os.path.exists(args.prompt_dir), "Error: prompt file Not Found!"
+    # filename_list, data_list, prompt_list = load_data_prompts(args.prompt_dir, video_size=(args.height, args.width),
+    #                                                           video_frames=n_frames, interp=args.interp)
     num_samples = len(prompt_list)
     samples_split = num_samples // gpu_num
     print('Prompts testing [rank:%d] %d/%d samples loaded.' % (gpu_no, samples_split, num_samples))
@@ -314,14 +396,20 @@ def run_frm_interp(args):
                 prompt = prompts[nn]
                 filename = filenames[nn]
                 # save_results(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
-                save_results_seperate(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
+                save_results_frame(out_dir=args.out_dir,
+                                   samples=samples,
+                                   filename=filename)
+                # save_results_seperate(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
 
-    print(f"Saved in {args.savedir}. Time used: {(time.time() - start):.2f} seconds")
+    print(f"Saved in {args.out_dir}. Time used: {(time.time() - start):.2f} seconds")
 
 
 def main():
     args = parse_args()
     task_type = args.task
+
+    seed = args.seed
+    seed_everything(seed)
 
     if task_type == 'interp':
         run_frm_interp(args=args)
@@ -330,4 +418,4 @@ def main():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    main()
