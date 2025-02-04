@@ -373,6 +373,11 @@ def run_frm_interp(args):
     data_list_rank = [data_list[i] for i in indices]
     filename_list_rank = [filename_list[i] for i in indices]
 
+    # make out_dir
+    out_dir = args.out_dir
+    out_dir = f"{out_dir}_n_frames_{args.video_length}_fs_{args.frame_stride}_ddim_steps_{args.ddim_steps}_seed_{args.seed}"
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
     start = time.time()
     with torch.no_grad(), torch.cuda.amp.autocast():
         for idx, indice in tqdm(enumerate(range(0, len(prompt_list_rank), args.bs)), desc='Sample Batch'):
@@ -396,12 +401,12 @@ def run_frm_interp(args):
                 prompt = prompts[nn]
                 filename = filenames[nn]
                 # save_results(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
-                save_results_frame(out_dir=args.out_dir,
+                save_results_frame(out_dir=out_dir,
                                    samples=samples,
                                    filename=filename)
                 # save_results_seperate(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
 
-    print(f"Saved in {args.out_dir}. Time used: {(time.time() - start):.2f} seconds")
+    print(f"Saved in {out_dir}. Time used: {(time.time() - start):.2f} seconds")
 
 
 def main():
