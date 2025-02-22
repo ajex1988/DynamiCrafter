@@ -3,6 +3,7 @@ import glob
 import argparse
 import torch
 import time
+import torch.nn as nn
 
 import torchvision
 import torchvision.transforms as transforms
@@ -59,6 +60,14 @@ def parse_args():
                         help="generate generative frame interpolation or not")
     args = parser.parse_args()
     return args
+
+
+def get_network_description(network):
+    if isinstance(network, nn.DataParallel):
+        network = network.module
+    s = str(network) # network description
+    n = sum(map(lambda x: x.numel(), network.parameters())) # network size
+    return s, n
 
 
 def load_model_checkpoint(model, ckpt):
@@ -327,6 +336,19 @@ def run_frm_interp(args):
 
     model_cfg['params']['unet_config']['params']['use_checkpoint'] = False
     model = instantiate_from_config(model_cfg)
+    ## Model profiling
+    model_profiling = False
+    if model_profiling:
+        submodel_openclip_embedder = model.cond_stage_model
+        submodel_openclip_image_embedder_v2 = model.embedder
+        submodel_autoencoder_kl = model.first_stage_model
+        submodel_resampler = model.image_proj_model
+        submodel_unet = model.model
+        submodel_list = [submodel_openclip_embedder, submodel_openclip_image_embedder_v2, submodel_autoencoder_kl, submodel_resampler, submodel_unet]
+        for submodel in submodel_list:
+            model_description, model_no_params = get_network_description(submodel)
+            print(f"Network description: {model_description}, Num params: {model_no_params}")
+    ###
     model = model.cuda(gpu_no)
     model.perframe_ae = args.perframe_ae
     assert os.path.exists(args.ckpt_path), "Error: checkpoint Not Found!"

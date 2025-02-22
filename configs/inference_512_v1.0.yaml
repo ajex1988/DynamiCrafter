@@ -1,4 +1,4 @@
-model:
+ model:
   target: lvdm.models.ddpm3d.LatentVisualDiffusion
   params:
     rescale_betas_zero_snr: True
