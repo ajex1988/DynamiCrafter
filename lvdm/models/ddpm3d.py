@@ -482,6 +482,7 @@ class LatentDiffusion(DDPM):
                  base_scale=0.7,
                  turning_step=400,
                  interp_mode=False,
+                 interp_type='first_last',
                  fps_condition_type='fs',
                  perframe_ae=False,
                  # added
@@ -503,6 +504,7 @@ class LatentDiffusion(DDPM):
         self.noise_strength = noise_strength
         self.use_dynamic_rescale = use_dynamic_rescale
         self.interp_mode = interp_mode
+        self.interp_type = interp_type
         self.fps_condition_type = fps_condition_type
         self.perframe_ae = perframe_ae
 
@@ -1094,10 +1096,22 @@ class LatentVisualDiffusion(LatentDiffusion):
 
         if self.model.conditioning_key == 'hybrid':
             if self.interp_mode:
-                ## starting frame + (L-2 empty frames) + ending frame
-                img_cat_cond = torch.zeros_like(z)
-                img_cat_cond[:,:,0,:,:] = z[:,:,0,:,:]
-                img_cat_cond[:,:,-1,:,:] = z[:,:,-1,:,:]
+                if self.interp_type == "first_last":
+                    ## starting frame + (L-2 empty frames) + ending frame
+                    ## this inherit from the original code
+                    img_cat_cond = torch.zeros_like(z)
+                    img_cat_cond[:,:,0,:,:] = z[:,:,0,:,:]
+                    img_cat_cond[:,:,-1,:,:] = z[:,:,-1,:,:]
+                elif self.interp_type == "5in_17out":
+                    ## 5 frame input, 17 frames output, 4x in temporal dimension.
+                    img_cat_cond = torch.zeros_like(z)
+                    img_cat_cond[:,:,0,:,:] = z[:,:,0,:,:]
+                    img_cat_cond[:,:,4,:,:] = z[:,:,4,:,:]
+                    img_cat_cond[:,:,8,:,:] = z[:,:,8,:,:]
+                    img_cat_cond[:, :, 12, :, :] = z[:, :, 12, :, :]
+                    img_cat_cond[:, :, 16, :, :] = z[:, :, 16, :, :]
+                else:
+                    raise NotImplementedError(f"Interpolation type {self.interp_type} is not implemented.")
             else:
                 ## simply repeat the cond_frame to match the seq_len of z
                 img_cat_cond = z[:,:,cond_frame_index,:,:]

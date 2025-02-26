@@ -29,7 +29,7 @@ model:
     fps_condition_type: 'fps'
     perframe_ae: true
     interp_mode: true
-    interp_type: 'first_last'
+    interp_type: '5in_17out'
 
     unet_config:
       target: lvdm.modules.networks.openaimodel3d.UNetModel
@@ -121,7 +121,7 @@ data:
       target: lvdm.data.youhq.YouHQ
       params:
         video_dir: /workspace/shared-dir/zzhu/data/VSR/YouHQ-Train/YouHQ-Train
-        video_length: 16
+        video_length: 17
         frame_stride: 1
         resolution: [512, 512]
         spatial_transform_type: resize_center_crop

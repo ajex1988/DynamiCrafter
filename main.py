@@ -26,8 +26,9 @@ def parse_args():
     parser.add_argument('--task', type=str, default='interp')
     parser.add_argument('--cfg_path', type=str, default='./configs/inference_512_v1.0.yaml')
     parser.add_argument('--ckpt_path', type=str, default='./checkpoints/dynamicrafter/model.ckpt')
-    parser.add_argument('--first_frm_path', type=str, default='')
-    parser.add_argument('--last_frm_path', type=str, default='')
+    parser.add_argument('--frame_path_list', nargs="*", type=str, default=[])
+    # parser.add_argument('--first_frm_path', type=str, default='')
+    # parser.add_argument('--last_frm_path', type=str, default='')
     parser.add_argument('--prompt_file_path', type=str, default='')
     parser.add_argument('--out_dir', type=str, default='')
     parser.add_argument('--height', type=int, default=512)
@@ -126,19 +127,41 @@ def load_prompts(prompt_file):
     return prompt_list
 
 
-def load_frames(first_frm_path, last_frm_path, height, width, n_frames):
+def load_frames(frame_path_list, height, width, n_frames, interp_type="first_last"):
     transform = transforms.Compose([
         transforms.Resize((height, width)),
         transforms.CenterCrop((height, width)),
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
-    first_frm = Image.open(first_frm_path).convert('RGB')
-    image_tensor1 = transform(first_frm).unsqueeze(1)
-    last_frm = Image.open(last_frm_path).convert('RGB')
-    image_tensor2 = transform(last_frm).unsqueeze(1)
-    frame_tensor1 = repeat(image_tensor1, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
-    frame_tensor2 = repeat(image_tensor2, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
-    frame_tensor = torch.cat([frame_tensor1, frame_tensor2], dim=1)
+    if interp_type == "first_last":
+        first_frm_path = frame_path_list[0]
+        last_frm_path = frame_path_list[-1]
+        first_frm = Image.open(first_frm_path).convert('RGB')
+        image_tensor1 = transform(first_frm).unsqueeze(1)
+        last_frm = Image.open(last_frm_path).convert('RGB')
+        image_tensor2 = transform(last_frm).unsqueeze(1)
+        frame_tensor1 = repeat(image_tensor1, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
+        frame_tensor2 = repeat(image_tensor2, 'c t h w -> c (repeat t) h w', repeat=n_frames // 2)
+        frame_tensor = torch.cat([frame_tensor1, frame_tensor2], dim=1)
+    elif interp_type == "5in_17out":
+        ## 5 frames as input and 17 frames as output. 4x in temporal dimension
+        frm_1 = Image.open(frame_path_list[0]).convert('RGB')
+        frm_2 = Image.open(frame_path_list[1]).convert('RGB')
+        frm_3 = Image.open(frame_path_list[2]).convert('RGB')
+        frm_4 = Image.open(frame_path_list[3]).convert('RGB')
+        frm_5 = Image.open(frame_path_list[4]).convert('RGB')
+        img_tensor_1 = transform(frm_1).unsqueeze(1)
+        img_tensor_2 = transform(frm_2).unsqueeze(1)
+        img_tensor_3 = transform(frm_3).unsqueeze(1)
+        img_tensor_4 = transform(frm_4).unsqueeze(1)
+        img_tensor_5 = transform(frm_5).unsqueeze(1)
+        frm_tensor_1 = repeat(img_tensor_1, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_2 = repeat(img_tensor_2, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_3 = repeat(img_tensor_3, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_4 = repeat(img_tensor_4, 'c t h w -> c (repeat t) h w', repeat=4)
+        frame_tensor = torch.cat([frm_tensor_1, frm_tensor_2, frm_tensor_3, frm_tensor_4, img_tensor_5], dim=1)
+    else:
+        raise ValueError(f"Unknown interp type: {interp_type}")
     return frame_tensor
 
 
@@ -371,8 +394,7 @@ def run_frm_interp(args):
     # # os.makedirs(fakedir, exist_ok=True)
     # os.makedirs(fakedir_separate, exist_ok=True)
 
-    frame_tensor = load_frames(first_frm_path=args.first_frm_path,
-                               last_frm_path=args.last_frm_path,
+    frame_tensor = load_frames(frame_path_list=args.frame_path_list,
                                height=args.height,
                                width=args.width,
                                n_frames=n_frames)

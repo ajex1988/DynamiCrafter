@@ -146,12 +146,21 @@ if __name__ == "__main__":
     Test the YouHQ dataset.
     """
     video_dir = "/workspace/shared-dir/zzhu/data/VSR/YouHQ-Train/YouHQ-Train"
+    log_dir = "/workspace/shared-dir/zzhu/tmp/20250224"
     dataset = YouHQ(video_dir=video_dir,)
     dataloader = DataLoader(dataset,
                             batch_size=1,
                             num_workers=0,
                             shuffle=False)
-
-    for i, batch in tqdm(enumerate(dataloader), desc="Data Batch"):
-        video_path = batch['path'][0]
-        print(video_path)
+    info = {}
+    with open(os.path.join(log_dir, "log.txt"), "w") as writer:
+        for i, batch in tqdm(enumerate(dataloader), desc="Data Batch"):
+            video_path = batch['path'][0]
+            b, c, f, h, w = batch['video'].shape[0], batch['video'].shape[1], batch['video'].shape[2], batch['video'].shape[3], batch['video'].shape[4]
+            writer.write(f"{video_path} {b} {c} {f} {h} {w}\n")
+            k = f"{b}_{c}_{f}_{h}_{w}"
+            if k not in info:
+                info[k] = 1
+            else:
+                info[k] += 1
+    print(info)
