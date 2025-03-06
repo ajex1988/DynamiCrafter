@@ -59,6 +59,12 @@ def parse_args():
     parser.add_argument("--loop", action='store_true', default=False, help="generate looping videos or not")
     parser.add_argument("--interp", action='store_true', default=True,
                         help="generate generative frame interpolation or not")
+
+    parser.add_argument("--interp_type", type=str, default="first_last")
+    parser.add_argument("--in_frame_num", type=int, default=5)
+    parser.add_argument("--run_on_whole_clip", action='store_true', default=False)
+    parser.add_argument("--in_dir", type=str, default="")
+
     args = parser.parse_args()
     return args
 
@@ -159,6 +165,22 @@ def load_frames(frame_path_list, height, width, n_frames, interp_type="first_las
         frm_tensor_2 = repeat(img_tensor_2, 'c t h w -> c (repeat t) h w', repeat=4)
         frm_tensor_3 = repeat(img_tensor_3, 'c t h w -> c (repeat t) h w', repeat=4)
         frm_tensor_4 = repeat(img_tensor_4, 'c t h w -> c (repeat t) h w', repeat=4)
+        frame_tensor = torch.cat([frm_tensor_1, frm_tensor_2, frm_tensor_3, frm_tensor_4, img_tensor_5], dim=1)
+    elif interp_type == "5in_16out":
+        frm_1 = Image.open(frame_path_list[0]).convert('RGB')
+        frm_2 = Image.open(frame_path_list[1]).convert('RGB')
+        frm_3 = Image.open(frame_path_list[2]).convert('RGB')
+        frm_4 = Image.open(frame_path_list[3]).convert('RGB')
+        frm_5 = Image.open(frame_path_list[4]).convert('RGB')
+        img_tensor_1 = transform(frm_1).unsqueeze(1)
+        img_tensor_2 = transform(frm_2).unsqueeze(1)
+        img_tensor_3 = transform(frm_3).unsqueeze(1)
+        img_tensor_4 = transform(frm_4).unsqueeze(1)
+        img_tensor_5 = transform(frm_5).unsqueeze(1)
+        frm_tensor_1 = repeat(img_tensor_1, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_2 = repeat(img_tensor_2, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_3 = repeat(img_tensor_3, 'c t h w -> c (repeat t) h w', repeat=4)
+        frm_tensor_4 = repeat(img_tensor_4, 'c t h w -> c (repeat t) h w', repeat=3)
         frame_tensor = torch.cat([frm_tensor_1, frm_tensor_2, frm_tensor_3, frm_tensor_4, img_tensor_5], dim=1)
     else:
         raise ValueError(f"Unknown interp type: {interp_type}")
@@ -326,7 +348,7 @@ def save_results_seperate(prompt, samples, filename, fakedir, fps=10, loop=False
             path = os.path.join(savedirs[idx].replace('samples', 'samples_separate'), f'{filename.split(".")[0]}_sample{i}.mp4')
             torchvision.io.write_video(path, grid, fps=fps, video_codec='h264', options={'crf': '10'})
 
-def save_results_frame(out_dir, samples, filename):
+def save_results_frame(out_dir, samples, filename, run_on_whole_clip=False):
     """
     Save the results by frame
     """
@@ -335,16 +357,31 @@ def save_results_frame(out_dir, samples, filename):
         os.makedirs(out_dir)
     samples = samples.detach().cpu()
     samples = torch.clamp(samples.float(), -1., 1.)
-    sample = samples[0] # Suppose batch size is 1 in the inference
+    sample = samples[0]  # Suppose batch size is 1 in the inference
     sample = (sample + 1.0) / 2.0
     sample = (sample * 255).to(torch.uint8).permute(1, 2, 3, 0)
     sample = sample.numpy()
     n_frames = sample.shape[0]
-    for i in range(n_frames):
-        frame = sample[i, ...]
-        img = Image.fromarray(frame)
-        img.save(os.path.join(out_dir, f'{filename.split(".")[0]}_{i}.png'))
-
+    if not run_on_whole_clip:
+        for i in range(n_frames):
+            frame = sample[i, ...]
+            img = Image.fromarray(frame)
+            img.save(os.path.join(out_dir, f'{filename.split(".")[0]}_{i}.png'))
+    else:
+        ## Only save the interpolated frames between first two frames
+        ## frame 1,2,3 should be the results, no matter what interp type is
+        frame_0 = sample[0, ...]
+        frame_1 = sample[1, ...]
+        frame_2 = sample[2, ...]
+        frame_3 = sample[3, ...]
+        img_0 = Image.fromarray(frame_0)
+        img_1 = Image.fromarray(frame_1)
+        img_2 = Image.fromarray(frame_2)
+        img_3 = Image.fromarray(frame_3)
+        img_0.save(os.path.join(out_dir, f'{filename.split(".")[0]}_0.png'))
+        img_1.save(os.path.join(out_dir, f'{filename.split(".")[0]}_1.png'))
+        img_2.save(os.path.join(out_dir, f'{filename.split(".")[0]}_2.png'))
+        img_3.save(os.path.join(out_dir, f'{filename.split(".")[0]}_3.png'))
 
 def run_frm_interp(args):
     """
@@ -401,7 +438,7 @@ def run_frm_interp(args):
     data_list = [frame_tensor]
     prompt = load_prompt(args.prompt_file_path)
     prompt_list = [prompt]
-    _, filename = os.path.split(args.first_frm_path)
+    _, filename = os.path.split(args.frame_path_list[0])
     filename_list = [filename]
 
     ## prompt file setting
@@ -434,7 +471,7 @@ def run_frm_interp(args):
                 videos = videos.unsqueeze(0).to("cuda")
 
             batch_samples = image_guided_synthesis(model, prompts, videos, noise_shape, args.n_samples, args.ddim_steps,
-                                                   args.ddim_eta, \
+                                                   args.ddim_eta,
                                                    args.unconditional_guidance_scale, args.cfg_img, args.frame_stride,
                                                    args.text_input, args.multiple_cond_cfg, args.loop, args.interp,
                                                    args.timestep_spacing, args.guidance_rescale)
@@ -453,6 +490,115 @@ def run_frm_interp(args):
     print(f"Saved in {out_dir}. Time used: {(time.time() - start):.2f} seconds")
 
 
+def run_clip_interp(args):
+    """
+    Run the model on the whole clip
+    In the args, run_on_whole_clip should be set to true and in_dir should be set.
+    """
+    ## Get the frame list
+    img_file_name_list = os.listdir(args.in_dir)
+    input_frame_name_list = []
+    for img_file_name in img_file_name_list:
+        if img_file_name.endswith(".png"):
+            input_frame_name_list.append(img_file_name)  # Input assumed to be png
+    input_frame_name_list = sorted(input_frame_name_list)  # Sort the input frame names
+    total_frame_num = len(input_frame_name_list)
+
+    in_frame_num = args.in_frame_num
+    assert total_frame_num >= in_frame_num
+
+    n_iters = total_frame_num - in_frame_num + 1
+
+    print('Running frame interpolation on the whole test clip.')
+    gpu_num = 1
+    gpu_no = 0
+    cfg_path = args.cfg_path
+    cfg = OmegaConf.load(cfg_path)
+    model_cfg = cfg.pop("model", OmegaConf.create())
+
+    model_cfg['params']['unet_config']['params']['use_checkpoint'] = False
+    model = instantiate_from_config(model_cfg)
+
+    model = model.cuda(gpu_no)
+    model.perframe_ae = args.perframe_ae
+    assert os.path.exists(args.ckpt_path), "Error: checkpoint Not Found!"
+    model = load_model_checkpoint(model, args.ckpt_path)
+    model.eval()
+
+    ## run over data
+    assert (args.height % 16 == 0) and (args.width % 16 == 0), "Error: image size [h,w] should be multiples of 16!"
+    assert args.bs == 1, "Current implementation only support [batch size = 1]!"
+    ## latent noise shape
+    h, w = args.height // 8, args.width // 8
+    channels = model.model.diffusion_model.out_channels
+    n_frames = args.video_length
+    print(f'Inference with {n_frames} frames')
+    noise_shape = [args.bs, channels, n_frames, h, w]
+
+    start = time.time()
+    for w_i in range(n_iters):
+        frame_name_list = input_frame_name_list[w_i:w_i+in_frame_num]
+        frame_path_list = [os.path.join(args.in_dir, f_name) for f_name in frame_name_list]
+        frame_path_list = sorted(frame_path_list)  # Sort again
+        frame_tensor = load_frames(frame_path_list=frame_path_list,
+                                height=args.height,
+                                width=args.width,
+                                n_frames=n_frames,
+                                interp_type="5in_16out")
+        data_list = [frame_tensor]
+        prompt = load_prompt(args.prompt_file_path)
+        prompt = ""
+        prompt_list = [prompt]
+        _, filename = os.path.split(frame_path_list[0])
+        filename_list = [filename]
+
+        num_samples = len(prompt_list)
+        samples_split = num_samples // gpu_num
+        print('Prompts testing [rank:%d] %d/%d samples loaded.' % (gpu_no, samples_split, num_samples))
+        # indices = random.choices(list(range(0, num_samples)), k=samples_per_device)
+        indices = list(range(samples_split * gpu_no, samples_split * (gpu_no + 1)))
+        prompt_list_rank = [prompt_list[i] for i in indices]
+        data_list_rank = [data_list[i] for i in indices]
+        filename_list_rank = [filename_list[i] for i in indices]
+
+        # make out_dir
+        out_dir = args.out_dir
+        out_dir = f"{out_dir}_n_frames_{args.video_length}_fs_{args.frame_stride}_ddim_steps_{args.ddim_steps}_seed_{args.seed}"
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        with torch.no_grad(), torch.cuda.amp.autocast():
+            for idx, indice in tqdm(enumerate(range(0, len(prompt_list_rank), args.bs)), desc='Sample Batch'):
+                prompts = prompt_list_rank[indice:indice + args.bs]
+                videos = data_list_rank[indice:indice + args.bs]
+                filenames = filename_list_rank[indice:indice + args.bs]
+                if isinstance(videos, list):
+                    videos = torch.stack(videos, dim=0).to("cuda")
+                else:
+                    videos = videos.unsqueeze(0).to("cuda")
+
+                batch_samples = image_guided_synthesis(model, prompts, videos, noise_shape, args.n_samples,
+                                                       args.ddim_steps,
+                                                       args.ddim_eta,
+                                                       args.unconditional_guidance_scale, args.cfg_img,
+                                                       args.frame_stride,
+                                                       args.text_input, args.multiple_cond_cfg, args.loop, args.interp,
+                                                       args.timestep_spacing, args.guidance_rescale)
+
+                ## save each example individually
+                for nn, samples in enumerate(batch_samples):
+                    ## samples : [n_samples,c,t,h,w]
+                    prompt = prompts[nn]
+                    filename = filenames[nn]
+                    # save_results(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
+                    save_results_frame(out_dir=out_dir,
+                                       samples=samples,
+                                       filename=filename,
+                                       run_on_whole_clip=True)
+                    # save_results_seperate(prompt, samples, filename, fakedir, fps=8, loop=args.loop)
+    print(f"Whole clip interpolated. Time used: {(time.time() - start):.2f} seconds")
+
+
 def main():
     args = parse_args()
     task_type = args.task
@@ -461,7 +607,10 @@ def main():
     seed_everything(seed)
 
     if task_type == 'interp':
-        run_frm_interp(args=args)
+        if not args.run_on_whole_clip:
+            run_frm_interp(args=args)
+        else:
+            run_clip_interp(args=args)
     else:
         raise NotImplementedError('Task type {} not implemented'.format(task_type))
 

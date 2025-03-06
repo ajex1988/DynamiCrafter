@@ -1110,6 +1110,14 @@ class LatentVisualDiffusion(LatentDiffusion):
                     img_cat_cond[:,:,8,:,:] = z[:,:,8,:,:]
                     img_cat_cond[:, :, 12, :, :] = z[:, :, 12, :, :]
                     img_cat_cond[:, :, 16, :, :] = z[:, :, 16, :, :]
+                elif self.interp_type == "5in_16out":
+                    ## 5 frame input, 16 frames output, 4x in temporal dimension.
+                    img_cat_cond = torch.zeros_like(z)
+                    img_cat_cond[:,:,0,:,:] = z[:,:,0,:,:]
+                    img_cat_cond[:,:,4,:,:] = z[:,:,4,:,:]
+                    img_cat_cond[:,:,8,:,:] = z[:,:,8,:,:]
+                    img_cat_cond[:, :, 12, :, :] = z[:, :, 12, :, :]
+                    img_cat_cond[:, :, 15, :, :] = z[:, :, 15, :, :]
                 else:
                     raise NotImplementedError(f"Interpolation type {self.interp_type} is not implemented.")
             else:

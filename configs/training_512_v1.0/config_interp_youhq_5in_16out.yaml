@@ -29,7 +29,7 @@ model:
     fps_condition_type: 'fps'
     perframe_ae: true
     interp_mode: true
-    interp_type: '5in_17out'
+    interp_type: '5in_16out'
 
     unet_config:
       target: lvdm.modules.networks.openaimodel3d.UNetModel
@@ -58,7 +58,7 @@ model:
         temporal_selfatt_only: true
         use_relative_position: false
         use_causal_attention: False
-        temporal_length: 17
+        temporal_length: 16
         addition_attention: true
         image_cross_attention: true
         default_fs: 10
@@ -109,7 +109,7 @@ model:
         embedding_dim: 1280
         output_dim: 1024
         ff_mult: 4
-        video_length: 17
+        video_length: 16
 
 data:
   target: utils_data.DataModuleFromConfig
@@ -121,7 +121,7 @@ data:
       target: lvdm.data.youhq.YouHQ
       params:
         video_dir: /workspace/shared-dir/zzhu/data/VSR/YouHQ-Train/YouHQ-Train
-        video_length: 17
+        video_length: 16
         frame_stride: 1
         resolution: [512, 512]
         spatial_transform_type: resize_center_crop
