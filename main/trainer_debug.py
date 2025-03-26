@@ -86,7 +86,7 @@ if __name__ == "__main__":
     for k in get_nondefault_trainer_args(args):
         trainer_config[k] = getattr(args, k)
 
-    num_nodes = trainer_config.num_nodes
+    num_nodes = 1
     ngpu_per_node = trainer_config.devices
     logger.info(f"Running on {num_rank}={num_nodes}x{ngpu_per_node} GPUs")
 
