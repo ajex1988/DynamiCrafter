@@ -24,6 +24,9 @@ def main():
     in_dir = args.in_dir
     out_dir = args.out_dir
 
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
     img_name_list = os.listdir(in_dir)
     for img_name in tqdm(img_name_list):
         img_path = os.path.join(in_dir, img_name)
